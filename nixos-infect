@@ -25,6 +25,9 @@
 
 set -e -o pipefail
 
+# included for detailed tracing
+set -x
+
 
 makeConf() {
 
