@@ -337,6 +337,8 @@ checkEnvVars() {
     [[ -z "$FLAKE_URI" ]] && { echo "ERROR: FLAKE_URI not set but USE_FLAKE=1"; exit 1; }
     [[ -z "$FLAKE_HOSTNAME" ]] && { echo "ERROR: FLAKE_HOSTNAME not set but USE_FLAKE=1"; exit 1; }
   fi
+
+  return 0;
 }
 
 
@@ -354,6 +356,8 @@ infect() {
   curl -L "${NIX_INSTALL_URL}" | sh -s -- --no-channel-add
   source ~/.nix-profile/etc/profile.d/nix.sh
 
+
+  # Check for flake use or legacy installation without flakes
   if [[ "$USE_FLAKE" == "1" ]]; then
     echo "[+] Flake mode enabled"
 
@@ -363,12 +367,32 @@ infect() {
     echo "[+] Cloning flake from $FLAKE_URI to /etc/nixos/flake"
     rm -rf /etc/nixos/flake
     mkdir -p /etc/nixos
-    nix --extra-experimental-features nix-command --extra-experimental-features flakes \
-      run nixpkgs#git -- clone "$FLAKE_URI" /etc/nixos/flake
+    if [[ "$FLAKE_URI" == /* || "$FLAKE_URI" == "."* || "$FLAKE_URI" == "~"* ]]; then
+      echo "[INFO] Detected local flake path: $FLAKE_URI"
+      mkdir -p /etc/nixos/flake
+      cp -r "$FLAKE_URI"/. /etc/nixos/flake/
+    else
+      echo "[INFO] Cloning flake from remote URI: $FLAKE_URI"
+      nix --extra-experimental-features nix-command --extra-experimental-features flakes \
+          run nixpkgs#git -- clone "$FLAKE_URI" /etc/nixos/flake
+    fi
 
-    nixos-rebuild switch --flake /etc/nixos/flake#"$FLAKE_HOSTNAME"
+
+    # Basically, this checks if nixos is already installed, as this is needed for nixos-rebuild --> otherwise it is inviked via the remote repo nixpkgs
+    if ! command -v nixos-rebuild >/dev/null 2>&1; then
+      echo "[ERROR] nixos-rebuild not found. Attempting to run via nix shell..."
+      nix --extra-experimental-features nix-command --extra-experimental-features flakes \
+        run nixpkgs#nixos-rebuild -- switch --flake /etc/nixos/flake#ec2-small
+    else
+      nixos-rebuild switch --flake /etc/nixos/flake#ec2-small
+    fi
+
+
   else
     echo "[+] Legacy mode enabled"
+
+
+
 
     [[ -z "$NIX_CHANNEL" ]] && NIX_CHANNEL="nixos-23.11"
     nix-channel --remove nixpkgs
